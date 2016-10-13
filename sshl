@@ -1,0 +1,175 @@
+#!/bin/bash
+# 自动获取sftp链接转ssh登录
+#
+# 如果第一个参数为 -p 则表示获取密码
+#
+#
+# 支持三种输入
+# 1. 直接输入IP
+#    sshl [-p] ${host_ip} [ ${user} [ ${port} ] ]
+# 2. 输入sftp:// 协议链接
+#    sshl [-p] sftp://[ ${user} [ :${pass} ]@ ] ${host_ip} [ :${port} ]
+# 3. 输入服务器标示
+#    sshl [-p] ${tag_name}
+
+###### 配置信息
+#
+# 密码列表文件
+sshl_pass='/etc/sshl_pass'
+
+#### 执行方法
+#
+#根据IP获取密码等信息
+getPassByIp(){
+    # 获取外部传递进来的信息
+    ssh_ip=${1}
+    ssh_user=${2}
+    ssh_port=${3}
+
+    # IP为空则不执行
+    if [ "${ssh_ip}" = "" ]; then
+        echo "需要查询的IP不能为空！";
+        exit 0;
+    fi
+
+    # 读取密码行
+    passlen=$(grep "[^@]\+@${ssh_ip}" ${sshl_pass})
+
+    # 没读取到则输出
+    if [ "${passlen}" = "" ]; then
+        echo "没找到 ${ssh_ip} 对应的密码记录.";
+        exit 0;
+    fi
+
+    # 如果用户名为空则获取用户名
+    if [ "${ssh_user}" = "" ]; then
+        ssh_user=$(expr ${passlen} : '^\([^:]\+\):[^@]\+@')
+    fi
+
+    # 如果没传递端口就获取端口号
+    if [ "${ssh_port}" = "" ]; then
+        ssh_port=$(expr ${passlen} : '^[^@]\+@[0-9\.]\+:\([0-9]\+\)')
+    fi
+    # 没获取到端口就设置为22
+    if [ "${ssh_port}" = "" ]; then
+        ssh_port=22
+    fi
+
+    # 重新读取密码行
+    passlen=$(grep "${ssh_user}:[^@]\+@${ssh_ip}" ${sshl_pass})
+
+    # 没读取到相关的密码则停止
+    if [ "${passlen}" = "" ]; then
+        echo "没找到 ${ssh_user}@${ssh_ip} 对应的密码记录.";
+        exit 0;
+    fi
+    ssh_pass=$(expr ${passlen} : "${ssh_user}:\([^@]\+\)@${ssh_ip}")
+
+}
+
+# 根据标记获取密码
+getPassByTagName(){
+    tag_name=${1}
+
+    # 通过标记获取链接信息
+    passlen=$(grep "[^#]\+#${cmd_1}" ${sshl_pass})
+    if [ "${passlen}" = "" ]; then
+        echo "未找到标记 ${tag_name}"
+        exit 0
+    fi
+
+    # 从密码行提取信息
+    ssh_ip=$(expr ${passlen} : '^[^@]\+@\([0-9\.]\+\)')
+    ssh_user=$(expr ${passlen} : '^\([^:]\+\):[^@]\+@')
+    ssh_pass=$(expr ${passlen} : "${ssh_user}:\([^@]\+\)@${ssh_ip}")
+    ssh_port=$(expr ${passlen} : '^[^@]\+@[0-9\.]\+:\([0-9]\+\)')
+
+    # 没获取到端口就设置为22
+    if [ "${ssh_port}" = "" ]; then
+        ssh_port=22
+    fi
+
+    # 输出提示 本次登录的服务器信息
+    echo "Login SSH: ${ssh_user}@${ssh_ip}:${ssh_port}"
+}
+
+# 根据sftp链接解析
+expSftpLink(){
+    ssh_link=${1}
+
+    # 是否没提交账号密码
+    ssh_ip=$(expr ${ssh_link} : '^sftp://\([0-9\.]\+\)\(:[0-9]\+\)\?\(/\|$\)')
+
+    # 有提交账号密码
+    if [ "${ssh_ip}" = "" ]; then
+        ssh_user=$(expr ${ssh_link} : '^sftp://\([^@:]\+\)')
+        ssh_pass=$(expr ${ssh_link} : '^sftp://[^@:]\+:\([^@]\+\)')
+        ssh_ip=$(expr ${ssh_link} : '^sftp://[^@]\+@\([0-9\.]\+\)')
+        ssh_port=$(expr ${ssh_link} : '^sftp://[^@]\+@[0-9\.]\+:\([0-9]\+\)')
+    fi
+
+    # 没有密码则走获取密码的过程
+    if [ "${ssh_pass}" = "" ]; then
+        getPassByIp ${ssh_ip} ${ssh_user} ${ssh_port}
+    fi 
+}
+
+#### 逻辑判断
+#
+# 检查参数一是否为获取密码
+getPass="false"
+if [ "${1}" = "-p" ]; then
+    getPass="true"
+    cmd_1=${2}
+    cmd_2=${3}
+    cmd_3=${4}
+else
+    cmd_1=${1}
+    cmd_2=${2}
+    cmd_3=${3}
+fi
+
+# 判断参数一是否为空
+if [[ ${cmd_1} = "" ]]; then
+    echo "必须传递一个有效参数 ip地址 / sftp格式链接 / tag标记";
+    exit 0;
+fi
+
+# 判断参数一类型
+if [ $(expr ${cmd_1} : '^[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+$') -gt 0 ]; then
+    # 是IP则直接走IP流程
+    getPassByIp ${cmd_1} ${cmd_2} ${cmd_3}
+elif [ $(expr ${cmd_1} : '^[a-zA-Z]\+://') -gt 0 ]; then
+    # 如果是协议则走分析流程
+    expSftpLink ${cmd_1}
+elif [ $(expr ${cmd_1} : '^[a-zA-Z0-9]\+$') -gt 0 ]; then
+    getPassByTagName ${cmd_1}
+else
+    echo "必须传递一个有效参数 ip地址 / sftp格式链接 / tag标记";
+    exit 0;
+fi
+
+# 对密码进行url解码
+ssh_pass=$(printf $(echo -n ${ssh_pass} | sed 's/\\/\\\\/g;s/\(%\)\([0-9a-fA-F][0-9a-fA-F]\)/\\x\2/g')"\n")
+
+# 调试输出
+# echo "sshpass -p ${ssh_pass} ssh ${ssh_user}@${ssh_ip} -p ${ssh_port}"
+
+# 判断是否提取密码
+if [ "${getPass}" = "true" ]; then
+    echo "Your SSH Pass: ${ssh_pass}";
+else
+    # 执行登录
+    sshpass -p ${ssh_pass} ssh ${ssh_user}@${ssh_ip} -p ${ssh_port}
+
+    # is Run Ok
+    if [ "$?" = 6 ]; then
+        echo "首次访问需要手动登录成功一次"
+        echo "Your SSH Pass: ${ssh_pass}"
+        ssh ${ssh_user}@${ssh_ip} -p ${ssh_port}
+    elif [ "$?" = 127 ]; then
+        echo "使用本工具需要安装 sshpass ."
+    fi
+fi
+
+#### Code End 
