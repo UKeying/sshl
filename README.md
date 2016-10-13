@@ -20,7 +20,7 @@ sshpass 详情请转：https://sourceforge.net/projects/sshpass/
 
 密码信息请遵从以下格式一行一个配置  密码中如果有特殊符号请使用url编码
 
-root:pass@192.168.1.1:22
+root:pass@192.168.1.1:22#tagName
 
 步骤二：使用
 
