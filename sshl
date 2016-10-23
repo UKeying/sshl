@@ -2,7 +2,7 @@
 # 自动获取sftp链接转ssh登录
 #
 # 如果第一个参数为 -p 则表示获取密码
-#
+# 为 -l 则是获取列表 -lt 表示获取列表 且只显示有tag的记录
 #
 # 支持三种输入
 # 1. 直接输入IP
@@ -111,19 +111,40 @@ expSftpLink(){
     # 没有密码则走获取密码的过程
     if [ "${ssh_pass}" = "" ]; then
         getPassByIp ${ssh_ip} ${ssh_user} ${ssh_port}
-    fi 
+    fi
+}
+
+# 输出所有的密码
+listPass() {
+
+    while read passlen
+    do
+        # 从密码行提取信息
+        ssh_ip=$(expr ${passlen} : '^[^@]\+@\([0-9\.]\+\)')
+        ssh_user=$(expr ${passlen} : '^\([^:]\+\):[^@]\+@')
+        ssh_port=$(expr ${passlen} : '^[^@]\+@[0-9\.]\+:\([0-9]\+\)')
+        tag_name=$(expr ${passlen} : "[^#]\+#\([0-9A-Za-z]\+\)")
+        if [ "${tag_name}" != "" ] || [ "${1}" != "-t" ]; then
+            printf "%s@%s\t%s\n" ${ssh_user} ${ssh_ip} ${tag_name}
+        fi
+    done < ${sshl_pass}
+    exit
 }
 
 #### 逻辑判断
-#
-# 检查参数一是否为获取密码
-getPass="false"
-if [ "${1}" = "-p" ]; then
+
+# 判断参数一是否为特殊要求
+if [ "${1}" = "-l" ]; then
+    listPass
+elif [[ "${1}" = "-lt" ]]; then
+    listPass -t
+elif [[ "${1}" = "-p" ]]; then
     getPass="true"
     cmd_1=${2}
     cmd_2=${3}
     cmd_3=${4}
 else
+    getPass="false"
     cmd_1=${1}
     cmd_2=${2}
     cmd_3=${3}
@@ -172,4 +193,4 @@ else
     fi
 fi
 
-#### Code End 
+#### Code End
